@@ -1,54 +1,38 @@
-# Define base image build arguments (must be before any FROM)
-ARG REPO_OWNER=dispatcharr
-ARG REPO_NAME=dispatcharr
-ARG BASE_TAG=base
+ARG PYTHON_VERSION=3.10-slim
 
-# --- Build frontend ---
+FROM python:${PYTHON_VERSION}
 
-FROM node:24 AS frontend-builder
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
 
-WORKDIR /app/frontend
-COPY ./frontend /app/frontend
-# remove any node_modules that may have been copied from the host (x86)
-RUN rm -rf node_modules || true; \
-    npm install --no-audit --progress=false;
-RUN    npm run build && \
-    rm -rf node_modules .cache
+# Instalar dependencias para compilar paquetes nativos de Python (como psycopg2)
+RUN apt-get update && apt-get install -y \
+    libpq-dev \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
-# --- Redeclare build arguments for the next stage ---
-ARG REPO_OWNER
-ARG REPO_NAME
-ARG BASE_TAG
+RUN mkdir -p /code
+WORKDIR /code
 
-# --- Final image based on the dynamic base ---
-FROM ghcr.io/${REPO_OWNER}/${REPO_NAME}:${BASE_TAG} AS final
-ENV VIRTUAL_ENV=/dispatcharrpy
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-WORKDIR /app
+# Actualizar el gestor de paquetes e instalar Poetry
+RUN pip install --no-cache-dir --upgrade pip poetry
 
-# Copy application code
-COPY . /app
-# Copy nginx configuration
-COPY ./docker/nginx.conf /etc/nginx/sites-enabled/default
-# Fix line endings and make entrypoint scripts executable
-RUN for f in /app/docker/entrypoint*.sh; do \
-    if [ -f "$f" ]; then \
-    sed -i 's/\r$//' "$f" && chmod +x "$f"; \
-    fi; \
-    done
-# Clean out existing frontend folder
-RUN rm -rf /app/frontend
-# Copy built frontend assets
-COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
+# Copiar las listas de dependencias
+COPY pyproject.toml poetry.lock* /code/
 
-# Add timestamp argument
-ARG TIMESTAMP
+# CORRECCIÓN CLAVE: Configuramos Poetry para instalar globalmente en el sistema 
+# e indicamos explícitamente que no busque la metadata de un paquete propio del proyecto.
+RUN poetry config virtualenvs.create false
+RUN poetry install --no-root --no-interaction
 
-# Update version.py with build timestamp if provided
-RUN if [ -n "$TIMESTAMP" ]; then \
-    echo "Updating timestamp to ${TIMESTAMP} in version.py" && \
-    sed -i "s|__timestamp__ = None.*|__timestamp__ = '${TIMESTAMP}'    # Set during CI/CD build process|" /app/version.py && \
-    cat /app/version.py; \
-    fi
+# Copiar el resto del código del repositorio
+COPY . /code
 
-ENTRYPOINT ["/app/docker/entrypoint.sh"]
+ENV SECRET_KEY "mUkz7ImIitzC2NoI26DTOJfPYBSLV3ZI2kCFZodMUjhc3xEmik"
+
+# Recolectar estáticos tolerando faltas iniciales
+RUN python manage.py collectstatic --noinput || true
+
+EXPOSE 8000
+
+CMD ["daphne","-b","0.0.0.0","-p","8000","dispatcharr.asgi"]
