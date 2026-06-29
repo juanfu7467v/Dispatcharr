@@ -5,7 +5,7 @@ FROM python:${PYTHON_VERSION}
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# Instalar dependencias para compilar paquetes nativos de Python (como psycopg2)
+# Instalar dependencias esenciales para compilar
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     gcc \
@@ -14,23 +14,23 @@ RUN apt-get update && apt-get install -y \
 RUN mkdir -p /code
 WORKDIR /code
 
-# Actualizar el gestor de paquetes e instalar Poetry
-RUN pip install --no-cache-dir --upgrade pip poetry
+# Instalar Poetry
+RUN pip install --no-cache-dir poetry
 
-# Copiar las listas de dependencias
+# Copiar archivos de dependencias
 COPY pyproject.toml poetry.lock* /code/
 
-# CORRECCIÓN CLAVE: Configuramos Poetry para instalar globalmente en el sistema 
-# e indicamos explícitamente que no busque la metadata de un paquete propio del proyecto.
-RUN poetry config virtualenvs.create false
-RUN poetry install --no-root --no-interaction
+# CAMBIO CLAVE: Forzar modo no-paquete dinámicamente y limpiar la caché de Fly
+RUN poetry config virtualenvs.create false \
+    && poetry config package-mode false \
+    && poetry install --no-interaction --no-ansi
 
-# Copiar el resto del código del repositorio
+# Copiar el código de la app
 COPY . /code
 
-ENV SECRET_KEY "mUkz7ImIitzC2NoI26DTOJfPYBSLV3ZI2kCFZodMUjhc3xEmik"
+ENV SECRET_KEY "AFwkWPL8AuNDcNrBLAG5vEwSzhsBzrBfRCfrWrVj7sVrpRrKkn"
 
-# Recolectar estáticos tolerando faltas iniciales
+# Recolectar estáticos sin romper si falta la base de datos temporalmente
 RUN python manage.py collectstatic --noinput || true
 
 EXPOSE 8000
