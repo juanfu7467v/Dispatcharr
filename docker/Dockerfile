@@ -13,40 +13,43 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8000
 
-# Instalar dependencias del sistema y herramientas de compilación
+# Instalar dependencias esenciales del sistema operativo
 RUN apt-get update && apt-get install -y \
     libpq-dev \
     gcc \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /code
 
-# Instalar manejador de dependencias y extraer requerimientos
-RUN pip install --no-cache-dir --upgrade pip
+# Actualizar pip e instalar la herramienta nativa de empaquetado del proyecto (uv)
+RUN pip install --no-cache-dir --upgrade pip uv
 
-# Copiar configuración de dependencias de la raíz
-COPY pyproject.toml /app/
+# Copiar archivos de configuración de dependencias de la raíz
+COPY pyproject.toml /code/
 
-# Como el proyecto usa pyproject.toml moderno, instalamos las dependencias directo
-RUN pip install --no-cache-dir . || pip install --no-cache-dir -r requirements.txt || true
+# Instalar los paquetes del proyecto usando uv directamente en el sistema global del contenedor
+RUN uv pip install --system . || pip install --no-cache-dir . || true
 
-# Copiar todo el código de la aplicación
-COPY . /app
+# Copiar el código fuente completo del backend
+COPY . /code
 
-# Limpiar directorio frontend local y copiar el compilado de la etapa 1
-RUN rm -rf /app/frontend
-COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
+# Limpiar rastros viejos del frontend y meter los estáticos optimizados de la etapa 1
+RUN rm -rf /code/frontend
+COPY --from=frontend-builder /app/frontend/dist /code/frontend/dist
 
-# Dar permisos de ejecución a los scripts del contenedor
-RUN for f in /app/docker/entrypoint*.sh; do \
+# Dar permisos correctos a scripts de ejecución por lote si existen
+RUN for f in /code/docker/entrypoint*.sh; do \
     if [ -f "$f" ]; then \
     sed -i 's/\r$//' "$f" && chmod +x "$f"; \
     fi; \
     done
 
-# Exponer el puerto por defecto de la app
+ENV SECRET_KEY "uspKxjGpyLMb6KYBj7NXgxL9VaM0ZBcZwsPSFMZtLo87xyHlv6"
+
+# Generar archivos estáticos para Django
+RUN python manage.py collectstatic --noinput || true
+
 EXPOSE 8000
 
-# Usar el entrypoint por defecto del proyecto
-ENTRYPOINT ["/app/docker/entrypoint.sh"]
+CMD ["daphne","-b","0.0.0.0","-p","8000","dispatcharr.asgi"]
